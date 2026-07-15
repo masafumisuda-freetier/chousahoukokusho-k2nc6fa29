@@ -239,7 +239,18 @@ const todayISO = () => {
   return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
 };
 
+const APP_TITLE = document.title;
+
+function fileTitle(){
+  const n = new Date();
+  const dateStr = `${n.getFullYear()}.${n.getMonth()+1}.${n.getDate()}`;
+  const timeStr = `${String(n.getHours()).padStart(2,'0')}.${String(n.getMinutes()).padStart(2,'0')}`;
+  const nameStr = document.getElementById('staffName').value.trim().replace(/\s+/g,' ');
+  return [dateStr, nameStr, timeStr].filter(Boolean).join(' ');
+}
+
 function sendAndPrint(){
+  document.title = fileTitle(); // ボタンを押した瞬間の日時でファイル名を確定
   const p = sendToSheet(); // 送信の完了を待ってから印刷ダイアログを開く(途中で通信が切れるのを防ぐ)
   if(p && p.then){
     let done = false;
@@ -252,15 +263,9 @@ function sendAndPrint(){
 }
 
 function printReport(){
-  const orig = document.title;
-  // ファイル名:送信日 調査者氏名 送信時刻(ボタンを押した瞬間)
-  const n = new Date();
-  const dateStr = `${n.getFullYear()}.${n.getMonth()+1}.${n.getDate()}`;
-  const timeStr = `${String(n.getHours()).padStart(2,'0')}.${String(n.getMinutes()).padStart(2,'0')}`;
-  const nameStr = document.getElementById('staffName').value.replace(/\u3000/g,' ').trim().replace(/ +/g,' ');
-  document.title = [dateStr, nameStr, timeStr].filter(Boolean).join(' ');
+  document.title = fileTitle();
   window.print();
-  setTimeout(()=>{ document.title = orig; }, 2000);
+  // タイトルは戻さない(報告書画面にいる間はファイル名のまま。入力画面に戻ると元に戻る)
 }
 
 /* ---------- 氏名の表記ゆれ防止 ---------- */
@@ -704,6 +709,7 @@ function sendToSheet(){
     });
 }
 function backToForm(){
+  document.title = APP_TITLE;
   document.getElementById('reportWrap').style.display='none';
   document.getElementById('app').style.display='block';
 }
