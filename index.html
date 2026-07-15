@@ -158,7 +158,7 @@
   <fieldset>
     <legend>調査概要</legend>
     <div class="row">
-      <div class="field wide"><label>調査目的</label><input id="purpose" placeholder="例:カバネリ周期狙い、○○ベル確率等"></div>
+      <div class="field wide"><label>調査目的(一度使うと記憶されます)</label><input id="purpose" list="purposeList" placeholder="例:カバネリ周期狙い、○○ベル確率等" autocomplete="off"><datalist id="purposeList"></datalist></div>
     </div>
     <div class="row">
       <div class="field m-full"><label>調査日</label><input type="date" id="surveyDate"></div>
@@ -185,12 +185,14 @@
   <fieldset>
     <legend>調査台データ(複数追加できます)</legend>
     <div id="machines"></div>
+    <datalist id="machineList"></datalist>
     <button type="button" class="add" onclick="addMachine()">+ 台を追加</button>
   </fieldset>
 
   <fieldset>
     <legend>交通費(複数区間を追加できます)</legend>
     <div id="trips"></div>
+    <datalist id="placeList"></datalist>
     <button type="button" class="add" onclick="addTrip()">+ 区間を追加</button>
     <p class="hint">車:距離(km)× 20円で自動計算/電車・バス等:料金を直接入力。「往復」にチェックすると2倍になります。</p>
   </fieldset>
@@ -638,6 +640,65 @@ function onShopInput(){
   }
 }
 
+/* ---------- 機種名の記憶 ---------- */
+const MACHINE_KEY = 'pachi-survey-machines';
+let machineNames = [];
+function loadMachineNames(){
+  try{
+    const v = localStorage.getItem(MACHINE_KEY);
+    if(v) machineNames = JSON.parse(v);
+  }catch(e){}
+  refreshMachineList();
+}
+function refreshMachineList(){
+  const dl = document.getElementById('machineList');
+  if(dl) dl.innerHTML = machineNames.map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+}
+function rememberMachines(){
+  document.querySelectorAll('#machines .card .m-name').forEach(inp=>{
+    const n = inp.value.trim();
+    if(!n) return;
+    const i = machineNames.indexOf(n);
+    if(i !== -1) machineNames.splice(i,1);
+    machineNames.unshift(n); // よく使う機種が上に来るように最新を先頭へ
+  });
+  machineNames = machineNames.slice(0,100);
+  try{ localStorage.setItem(MACHINE_KEY, JSON.stringify(machineNames)); }catch(e){}
+  refreshMachineList();
+}
+
+/* ---------- 入力候補の記憶(調査目的・出発地/到着地) ---------- */
+function makeMemory(storageKey, listId){
+  let items = [];
+  const refresh = ()=>{
+    const dl = document.getElementById(listId);
+    if(dl) dl.innerHTML = items.map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+  };
+  return {
+    load(){
+      try{
+        const v = localStorage.getItem(storageKey);
+        if(v) items = JSON.parse(v);
+      }catch(e){}
+      refresh();
+    },
+    remember(values){
+      values.forEach(v=>{
+        const n = String(v||'').trim();
+        if(!n) return;
+        const i = items.indexOf(n);
+        if(i !== -1) items.splice(i,1);
+        items.unshift(n); // 最近使ったものを候補の上に
+      });
+      items = items.slice(0,100);
+      try{ localStorage.setItem(storageKey, JSON.stringify(items)); }catch(e){}
+      refresh();
+    }
+  };
+}
+const purposeMem = makeMemory('pachi-survey-purposes', 'purposeList');
+const placeMem = makeMemory('pachi-survey-places', 'placeList');
+
 /* ---------- メダル換算 ---------- */
 function medalValue(){
   const modoshi = parseFloat(document.getElementById('rateModoshi').value);
@@ -691,7 +752,7 @@ function addMachine(){
   div.innerHTML = `
     <button type="button" class="del" onclick="this.parentElement.remove();calcTotals()">削除</button>
     <div class="row">
-      <div class="field m-full" style="flex:2"><label>機種名</label><input class="m-name" placeholder="例:○○○○"></div>
+      <div class="field m-full" style="flex:2"><label>機種名(一度使うと記憶されます)</label><input class="m-name" list="machineList" placeholder="例:○○○○" autocomplete="off"></div>
       <div class="field"><label>台番号</label><input class="m-no" placeholder="例:1234"></div>
     </div>
     <div class="row">
@@ -723,8 +784,8 @@ function addTrip(){
   div.innerHTML = `
     <button type="button" class="del" onclick="this.parentElement.remove();calcTotals()">削除</button>
     <div class="row">
-      <div class="field"><label>出発地</label><input class="t-from" placeholder="例:本社"></div>
-      <div class="field"><label>到着地</label><input class="t-to" placeholder="例:○○ホール"></div>
+      <div class="field"><label>出発地</label><input class="t-from" list="placeList" placeholder="例:本社" autocomplete="off"></div>
+      <div class="field"><label>到着地</label><input class="t-to" list="placeList" placeholder="例:○○ホール" autocomplete="off"></div>
     </div>
     <div class="radio-group">
       <label><input type="radio" name="mode${id}" value="car" checked onchange="tripMode(this)"> 車(社有車・自家用車)</label>
@@ -810,6 +871,9 @@ function buildReport(){
     saveShops();
     refreshShopList();
   }
+  rememberMachines();
+  purposeMem.remember([g('purpose')]);
+  placeMem.remember(Array.from(document.querySelectorAll('#trips .t-from, #trips .t-to')).map(el=>el.value));
 
   let inv=0, ret=0, machineRows='', memoList=[], daiList=[], photoFigs='', totalPhotos=0, evCount={};
   document.querySelectorAll('#machines .card').forEach((c,idx)=>{
@@ -1042,6 +1106,9 @@ document.getElementById('shopName').addEventListener('change', onShopInput);
     document.getElementById('surveyDate').valueAsDate = new Date();
   }
   refreshDraftBar();
+  loadMachineNames();
+  purposeMem.load();
+  placeMem.load();
   loadShops().then(()=>{ refreshShopList(); onShopInput(); });
   document.addEventListener('input', scheduleSave);
   document.addEventListener('change', scheduleSave);
