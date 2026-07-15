@@ -79,6 +79,9 @@
   .memo-box{border:1px solid #333;min-height:32px;padding:6px 8px;white-space:pre-wrap}
   .footer-note{font-size:11.5px;margin-top:14px;color:#333}
 
+  .ts-row{position:relative;padding-right:58px}
+  .ts-del{position:absolute;right:0;bottom:14px;border:1px solid var(--line);background:#fff;color:#8a3030;border-radius:4px;font-size:12px;padding:9px 10px;cursor:pointer}
+  .ts-del:hover{background:#fbeeee}
   .draft-bar{display:flex;gap:8px;margin-bottom:14px;align-items:stretch}
   .draft-bar select{flex:1;min-height:42px;font-size:14px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:#fff}
   .scroll-hint{display:none}
@@ -159,9 +162,9 @@
     </div>
     <div class="row">
       <div class="field m-full"><label>調査日</label><input type="date" id="surveyDate"></div>
-      <div class="field"><label>開始時刻</label><input type="time" id="timeStart"></div>
-      <div class="field"><label>終了時刻</label><input type="time" id="timeEnd"></div>
     </div>
+    <div id="timeslots"></div>
+    <button type="button" class="add" onclick="addTimeslot()" style="margin-bottom:10px">+ 時間帯を追加(同じ店に戻った場合など)</button>
     <div class="row">
       <div class="field m-full">
         <label>店舗名(一度使うと記憶されます)</label>
@@ -337,9 +340,10 @@ function collectDraft(){
   const gv = id => document.getElementById(id).value;
   return {
     savedAt: Date.now(),
-    fields: {purpose:gv('purpose'), surveyDate:gv('surveyDate'), timeStart:gv('timeStart'), timeEnd:gv('timeEnd'),
+    fields: {purpose:gv('purpose'), surveyDate:gv('surveyDate'),
              dept:gv('dept'), staffName:gv('staffName'), shopName:gv('shopName'), shopAddr:gv('shopAddr'),
              rateKashi:gv('rateKashi'), rateModoshi:gv('rateModoshi')},
+    slots: Array.from(document.querySelectorAll('#timeslots .ts-row')).map(r=>({s:r.querySelector('.ts-start').value, e:r.querySelector('.ts-end').value})),
     machines: Array.from(document.querySelectorAll('#machines .card')).map(c=>({
       name:c.querySelector('.m-name').value, no:c.querySelector('.m-no').value,
       cash:c.querySelector('.m-cash').value, medin:c.querySelector('.m-medin').value,
@@ -356,7 +360,8 @@ function collectDraft(){
 }
 function isDraftEmpty(d){
   const f = d.fields||{};
-  if([f.purpose,f.shopName,f.shopAddr,f.timeStart,f.timeEnd].some(v=>v&&String(v).trim())) return false;
+  if([f.purpose,f.shopName,f.shopAddr].some(v=>v&&String(v).trim())) return false;
+  if((d.slots||[]).some(t=>(t.s&&t.s.trim())||(t.e&&t.e.trim()))) return false;
   if((d.machines||[]).some(m=>[m.name,m.no,m.cash,m.medin,m.medout,m.games,m.memo].some(v=>v&&String(v).trim())||(m.photos||[]).length)) return false;
   if((d.trips||[]).some(t=>[t.from,t.to,t.km,t.fare,t.route].some(v=>v&&String(v).trim()))) return false;
   return true;
@@ -364,12 +369,17 @@ function isDraftEmpty(d){
 function restoreDraft(d){
   const f = d.fields||{};
   const setV = (id,v)=>{ const el=document.getElementById(id); if(el && v!==undefined && v!==null && v!=='') el.value=v; };
-  ['purpose','surveyDate','timeStart','timeEnd','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>{
+  ['purpose','surveyDate','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>{
     document.getElementById(k).value = '';
   });
   document.getElementById('rateKashi').value = '50';
-  ['purpose','surveyDate','timeStart','timeEnd','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>setV(k,f[k]));
+  ['purpose','surveyDate','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>setV(k,f[k]));
   if(!f.surveyDate) document.getElementById('surveyDate').valueAsDate = new Date();
+  document.getElementById('timeslots').innerHTML = '';
+  let slots = d.slots;
+  if((!slots || !slots.length) && (f.timeStart || f.timeEnd)) slots = [{s:f.timeStart||'', e:f.timeEnd||''}]; // 旧形式の下書きを引き継ぐ
+  if(!slots || !slots.length) slots = [{}];
+  slots.forEach(t=>addTimeslot(t.s, t.e));
   document.getElementById('machines').innerHTML = '';
   ((d.machines&&d.machines.length)?d.machines:[{}]).forEach(md=>{
     addMachine();
@@ -394,7 +404,9 @@ function restoreDraft(d){
   calcTotals();
 }
 function resetForm(){
-  ['purpose','timeStart','timeEnd','shopName','shopAddr','rateModoshi'].forEach(id=>{ document.getElementById(id).value=''; });
+  ['purpose','shopName','shopAddr','rateModoshi'].forEach(id=>{ document.getElementById(id).value=''; });
+  document.getElementById('timeslots').innerHTML = '';
+  addTimeslot();
   document.getElementById('rateKashi').value = '50';
   document.getElementById('surveyDate').valueAsDate = new Date();
   document.getElementById('machines').innerHTML = ''; addMachine();
@@ -643,6 +655,35 @@ function machineCalc(c){
   return {cash, medIn, medOut, invY, retY};
 }
 
+/* ---------- 調査時間帯(複数対応) ---------- */
+function addTimeslot(s, e){
+  const div = document.createElement('div');
+  div.className = 'row ts-row';
+  div.innerHTML = `
+    <div class="field"><label>開始時刻</label><input type="time" class="ts-start"></div>
+    <div class="field"><label>終了時刻</label><input type="time" class="ts-end"></div>
+    <button type="button" class="ts-del" onclick="removeTimeslot(this)">削除</button>`;
+  document.getElementById('timeslots').appendChild(div);
+  if(s) div.querySelector('.ts-start').value = s;
+  if(e) div.querySelector('.ts-end').value = e;
+}
+function removeTimeslot(btn){
+  const rows = document.querySelectorAll('#timeslots .ts-row');
+  if(rows.length <= 1){
+    // 最後の1つは消さずに中身だけ空にする
+    btn.parentElement.querySelector('.ts-start').value = '';
+    btn.parentElement.querySelector('.ts-end').value = '';
+  }else{
+    btn.parentElement.remove();
+  }
+  scheduleSave();
+}
+function getTimeslots(){
+  return Array.from(document.querySelectorAll('#timeslots .ts-row'))
+    .map(r=>({s:r.querySelector('.ts-start').value, e:r.querySelector('.ts-end').value}))
+    .filter(t=>t.s||t.e);
+}
+
 /* ---------- 台データ ---------- */
 function addMachine(){
   const div = document.createElement('div');
@@ -842,7 +883,8 @@ function buildReport(){
   const evStr = Object.keys(evCount).map(t=>`${t}×${evCount[t]}`).join('、');
 
   const net = ret - inv;
-  const timeRange = (g('timeStart')||g('timeEnd')) ? `${g('timeStart')} 〜 ${g('timeEnd')}` : '';
+  const slots = getTimeslots();
+  const timeRange = slots.map(t=>`${t.s} 〜 ${t.e}`).join('、');
   const from = [g('dept').trim(), g('staffName').trim()].filter(Boolean).join('　');
 
   document.getElementById('report').innerHTML = `
@@ -918,8 +960,9 @@ function buildReport(){
     報告ID: repId,
     報告日: todayISO(),
     調査日: g('surveyDate'),
-    開始時刻: g('timeStart'),
-    終了時刻: g('timeEnd'),
+    開始時刻: slots.length ? slots[0].s : '',
+    終了時刻: slots.length ? slots[slots.length-1].e : '',
+    調査時間帯: timeRange,
     所属: g('dept').trim(),
     調査者: g('staffName').trim(),
     店舗名: sName,
@@ -993,6 +1036,7 @@ document.getElementById('shopName').addEventListener('change', onShopInput);
     setDraftStatus(`前回の入力を復元しました(最終保存 ${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')})`);
   }else{
     currentDraftId = newDraftId();
+    addTimeslot();
     addMachine();
     addTrip();
     document.getElementById('surveyDate').valueAsDate = new Date();
