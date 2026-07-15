@@ -30,6 +30,9 @@
   .field.wide{flex-basis:100%}
   label{font-size:12px;color:#5a6272;margin-bottom:3px}
   input,select,textarea{font-family:var(--gothic);font-size:15px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink)}
+  .field input,.field select,.field textarea{width:100%;min-height:42px}
+  input[type=date],input[type=time]{-webkit-appearance:none;appearance:none;background:#fff}
+  input[type=file]{min-height:auto;padding:6px}
   input:focus,select:focus,textarea:focus{outline:2px solid var(--indigo);outline-offset:1px}
   .hint{font-size:12px;color:#8a92a2;margin-top:3px}
   .saved-badge{font-size:12px;color:#2c7a4b;margin-top:3px;display:none}
@@ -182,18 +185,6 @@
     <p class="hint">車:距離(km)× 20円で自動計算/電車・バス等:料金を直接入力。「往復」にチェックすると2倍になります。</p>
   </fieldset>
 
-  <fieldset>
-    <legend>添付証憑</legend>
-    <div class="checkline">
-      <span class="ev-hint">該当するものをすべてタップしてください(複数選択可)</span>
-      <label class="chip"><input type="checkbox" id="evReceipt"> レシート・領収書</label>
-      <label class="chip"><input type="checkbox" id="evPhoto"> 台データ写真</label>
-      <label class="chip"><input type="checkbox" id="evSand"> サンド写真</label>
-      <label class="chip"><input type="checkbox" id="evOther"> その他</label>
-      <input id="evOtherText" placeholder="その他の内容" style="flex:1;min-width:120px">
-    </div>
-  </fieldset>
-
   <div class="totals-bar" id="totalsBar">
     <span>総投資:<b id="tInv">0</b>円</span>
     <span>総回収:<b id="tRet">0</b>円</span>
@@ -314,7 +305,7 @@ async function addMachinePhotos(input){
     if(!f.type.startsWith('image/')) continue;
     st.textContent = '写真を圧縮しています…';
     try{
-      card._photos.push(await compressImage(f));
+      card._photos.push({data: await compressImage(f), type: '台データ写真'});
     }catch(e){
       st.textContent = '一部の写真を読み込めませんでした';
     }
@@ -327,17 +318,25 @@ function removeMachinePhoto(btn, i){
   card._photos.splice(i,1);
   renderMachinePhotos(card);
 }
+const PHOTO_TYPES = ['台データ写真','サンド写真','レシート・領収書','その他'];
+function setPhotoType(sel, i){
+  const card = sel.closest('.card');
+  card._photos[i].type = sel.value;
+}
 function renderMachinePhotos(card){
   const box = card.querySelector('.m-photo-preview');
   const ph = card._photos || [];
   box.innerHTML = ph.map((p,i)=>`
-    <div style="position:relative">
-      <img src="${p}" style="width:86px;height:86px;object-fit:cover;border:1px solid var(--line);border-radius:4px">
+    <div style="position:relative;width:96px">
+      <img src="${p.data}" style="width:96px;height:86px;object-fit:cover;border:1px solid var(--line);border-radius:4px">
       <button type="button" onclick="removeMachinePhoto(this,${i})"
         style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:#fff;color:#8a3030;font-size:12px;line-height:1;cursor:pointer">✕</button>
+      <select onchange="setPhotoType(this,${i})" style="width:96px;font-size:11px;margin-top:3px;padding:3px 2px;min-height:auto">
+        ${PHOTO_TYPES.map(t=>`<option${p.type===t?' selected':''}>${t}</option>`).join('')}
+      </select>
     </div>`).join('');
   const st = card.querySelector('.m-photo-status');
-  st.textContent = ph.length ? `${ph.length}枚添付中(送信時にGoogleドライブへ保存されます)` : '';
+  st.textContent = ph.length ? `${ph.length}枚添付中(写真の下で種別を選べます)` : '';
 }
 
 /* ---------- 店舗記憶(Claude内では window.storage、ダウンロード後は localStorage) ---------- */
@@ -540,7 +539,7 @@ function buildReport(){
     refreshShopList();
   }
 
-  let inv=0, ret=0, machineRows='', memoList=[], daiList=[], photoFigs='', totalPhotos=0;
+  let inv=0, ret=0, machineRows='', memoList=[], daiList=[], photoFigs='', totalPhotos=0, evCount={};
   document.querySelectorAll('#machines .card').forEach((c,idx)=>{
     const m = machineCalc(c);
     inv += m.invY; ret += m.retY;
@@ -549,9 +548,13 @@ function buildReport(){
     const memo = c.querySelector('.m-memo').value.trim();
     const ph = c._photos || [];
     totalPhotos += ph.length;
+    const typeCount = {};
     ph.forEach((p,j)=>{
-      photoFigs += `<figure style="margin:0;text-align:center"><img src="${p}" style="height:190px;max-width:45vw;width:auto;border:1px solid #333"><figcaption style="font-size:11px">No.${idx+1} ${esc(mName)} 写真${j+1}</figcaption></figure>`;
+      typeCount[p.type] = (typeCount[p.type]||0) + 1;
+      evCount[p.type] = (evCount[p.type]||0) + 1;
+      photoFigs += `<figure style="margin:0;text-align:center"><img src="${p.data}" style="height:190px;max-width:45vw;width:auto;border:1px solid #333"><figcaption style="font-size:11px">No.${idx+1} ${esc(mName)} ${p.type}${j+1}</figcaption></figure>`;
     });
+    const evMachine = Object.keys(typeCount).map(t=>`${t}×${typeCount[t]}`).join('、');
     daiList.push({
       台No: idx+1,
       機種名: mName,
@@ -564,7 +567,8 @@ function buildReport(){
       '収支(円)': m.retY - m.invY,
       総G数: c.querySelector('.m-games').value,
       備考: memo,
-      写真: ph
+      添付証憑: evMachine,
+      写真: ph.map(p=>p.data)
     });
     if(memo) memoList.push(`<b>No.${idx+1} ${esc(mName)}${mNo?'(台'+esc(mNo)+')':''}</b>:${esc(memo)}`);
     const invNote = m.medIn>0 ? `<br><span style="font-size:10.5px">(現金${yen(m.cash)}+メダル${m.medIn}枚)</span>` : '';
@@ -604,11 +608,7 @@ function buildReport(){
   });
   if(!tripRows) tripRows = `<tr><td colspan="4" class="l">記載なし</td></tr>`;
 
-  const ev=[];
-  if(document.getElementById('evReceipt').checked) ev.push('レシート・領収書');
-  if(document.getElementById('evPhoto').checked) ev.push('台データ写真');
-  if(document.getElementById('evSand').checked) ev.push('サンド写真');
-  if(document.getElementById('evOther').checked) ev.push('その他('+esc(g('evOtherText'))+')');
+  const evStr = Object.keys(evCount).map(t=>`${t}×${evCount[t]}`).join('、');
 
   const net = ret - inv;
   const timeRange = (g('timeStart')||g('timeEnd')) ? `${g('timeStart')} 〜 ${g('timeEnd')}` : '';
@@ -658,7 +658,7 @@ function buildReport(){
 
     <div class="pb">
     <p class="sec-title">3. 添付証憑</p>
-    <div class="memo-box">${ev.length?ev.join('、'):'なし'}${totalPhotos?`(写真${totalPhotos}枚を下記に添付)`:''}</div>
+    <div class="memo-box">${evStr||'なし'}${totalPhotos?`(計${totalPhotos}枚を下記に添付)`:''}</div>
     </div>
     ${totalPhotos?`
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
@@ -698,7 +698,7 @@ function buildReport(){
     台: daiList,
     '交通費(円)': trip,
     交通費詳細: tripDetail.join(' | '),
-    添付証憑: ev.join('、'),
+    添付証憑: evStr,
     写真枚数: totalPhotos,
     _sent: false
   };
