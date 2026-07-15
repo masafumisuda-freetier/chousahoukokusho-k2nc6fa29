@@ -134,7 +134,7 @@
   <fieldset>
     <legend>基本情報</legend>
     <div class="row">
-      <div class="field m-full"><label>所属(省略可)</label><input id="dept" placeholder="例:調査部 ※省略可"></div>
+      <div class="field m-full"><label>所属(省略可)</label><input id="dept" placeholder="例:コーディング、計算等 ※省略可"></div>
       <div class="field m-full"><label>調査者氏名(姓と名の間に半角スペース)</label>
         <input id="staffName" placeholder="例:山田 太郎" onblur="normalizeStaffName()">
         <span class="hint" id="nameHint">※ 姓と名の間に半角スペースを1つ入れてください(例:山田 太郎)</span>
@@ -191,12 +191,6 @@
       <label class="chip"><input type="checkbox" id="evSand"> サンド写真</label>
       <label class="chip"><input type="checkbox" id="evOther"> その他</label>
       <input id="evOtherText" placeholder="その他の内容" style="flex:1;min-width:120px">
-    </div>
-    <div style="margin-top:14px">
-      <label style="display:block;margin-bottom:6px">写真を添付(台データ・サンド・レシート等/複数可・最大8枚)</label>
-      <input type="file" id="photoInput" accept="image/*" multiple onchange="addPhotos(Array.from(this.files));this.value=''">
-      <div id="photoStatus" class="hint"></div>
-      <div id="photoPreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
     </div>
   </fieldset>
 
@@ -282,9 +276,8 @@ function normalizeStaffName(){
   }
 }
 
-/* ---------- 写真添付 ---------- */
-const MAX_PHOTOS = 8;
-let photos = []; // dataURL(縮小済みJPEG)の配列
+/* ---------- 写真添付(台ごと) ---------- */
+const MAX_PHOTOS_PER_MACHINE = 6;
 
 function compressImage(file){
   return new Promise((resolve,reject)=>{
@@ -310,33 +303,41 @@ function compressImage(file){
     reader.readAsDataURL(file);
   });
 }
-async function addPhotos(files){
-  const st = document.getElementById('photoStatus');
+async function addMachinePhotos(input){
+  const card = input.closest('.card');
+  if(!card._photos) card._photos = [];
+  const files = Array.from(input.files);
+  input.value = '';
+  const st = card.querySelector('.m-photo-status');
   for(const f of files){
-    if(photos.length >= MAX_PHOTOS){ st.textContent = `写真は最大${MAX_PHOTOS}枚までです`; break; }
+    if(card._photos.length >= MAX_PHOTOS_PER_MACHINE){ st.textContent = `写真は1台につき最大${MAX_PHOTOS_PER_MACHINE}枚までです`; break; }
     if(!f.type.startsWith('image/')) continue;
     st.textContent = '写真を圧縮しています…';
     try{
-      photos.push(await compressImage(f));
+      card._photos.push(await compressImage(f));
     }catch(e){
       st.textContent = '一部の写真を読み込めませんでした';
     }
   }
   if(st.textContent === '写真を圧縮しています…') st.textContent = '';
-  renderPhotos();
+  renderMachinePhotos(card);
 }
-function removePhoto(i){ photos.splice(i,1); renderPhotos(); }
-function renderPhotos(){
-  const box = document.getElementById('photoPreview');
-  box.innerHTML = photos.map((p,i)=>`
+function removeMachinePhoto(btn, i){
+  const card = btn.closest('.card');
+  card._photos.splice(i,1);
+  renderMachinePhotos(card);
+}
+function renderMachinePhotos(card){
+  const box = card.querySelector('.m-photo-preview');
+  const ph = card._photos || [];
+  box.innerHTML = ph.map((p,i)=>`
     <div style="position:relative">
       <img src="${p}" style="width:86px;height:86px;object-fit:cover;border:1px solid var(--line);border-radius:4px">
-      <button type="button" onclick="removePhoto(${i})"
+      <button type="button" onclick="removeMachinePhoto(this,${i})"
         style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:#fff;color:#8a3030;font-size:12px;line-height:1;cursor:pointer">✕</button>
     </div>`).join('');
-  const st = document.getElementById('photoStatus');
-  if(photos.length) st.textContent = `${photos.length}枚添付中(送信時にGoogleドライブへ保存されます)`;
-  else if(!st.textContent.includes('最大')) st.textContent = '';
+  const st = card.querySelector('.m-photo-status');
+  st.textContent = ph.length ? `${ph.length}枚添付中(送信時にGoogleドライブへ保存されます)` : '';
 }
 
 /* ---------- 店舗記憶(Claude内では window.storage、ダウンロード後は localStorage) ---------- */
@@ -429,7 +430,14 @@ function addMachine(){
       <div class="field"><label>総ゲーム数</label><input type="number" class="m-games" min="0"></div>
     </div>
     <div class="row">
-      <div class="field wide"><label>備考(挙動や調査内容)</label><input class="m-memo" placeholder="例:内容等"></div>
+      <div class="field wide"><label>備考(挙動や調査内容)</label><input class="m-memo" placeholder="例:サンプル投稿で送信した内容等"></div>
+    </div>
+    <div class="row">
+      <div class="field wide"><label>この台の写真(台データ・サンド等/最大6枚)</label>
+        <input type="file" accept="image/*" multiple class="m-photo-input" onchange="addMachinePhotos(this)">
+        <div class="hint m-photo-status"></div>
+        <div class="m-photo-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
+      </div>
     </div>
     <div class="subtotal">投資:<span class="m-invy">0</span>円 / 回収:<span class="m-rety">0</span>円 / 収支:<span class="m-net">0</span>円</div>`;
   document.getElementById('machines').appendChild(div);
@@ -532,13 +540,32 @@ function buildReport(){
     refreshShopList();
   }
 
-  let inv=0, ret=0, machineRows='', memoList=[];
+  let inv=0, ret=0, machineRows='', memoList=[], daiList=[], photoFigs='', totalPhotos=0;
   document.querySelectorAll('#machines .card').forEach((c,idx)=>{
     const m = machineCalc(c);
     inv += m.invY; ret += m.retY;
     const mName = c.querySelector('.m-name').value;
     const mNo = c.querySelector('.m-no').value;
     const memo = c.querySelector('.m-memo').value.trim();
+    const ph = c._photos || [];
+    totalPhotos += ph.length;
+    ph.forEach((p,j)=>{
+      photoFigs += `<figure style="margin:0;text-align:center"><img src="${p}" style="height:190px;max-width:45vw;width:auto;border:1px solid #333"><figcaption style="font-size:11px">No.${idx+1} ${esc(mName)} 写真${j+1}</figcaption></figure>`;
+    });
+    daiList.push({
+      台No: idx+1,
+      機種名: mName,
+      台番号: mNo,
+      '現金投資(円)': m.cash,
+      'メダル投資(枚)': m.medIn,
+      '回収メダル(枚)': m.medOut,
+      '投資額(円)': m.invY,
+      '回収額(円)': m.retY,
+      '収支(円)': m.retY - m.invY,
+      総G数: c.querySelector('.m-games').value,
+      備考: memo,
+      写真: ph
+    });
     if(memo) memoList.push(`<b>No.${idx+1} ${esc(mName)}${mNo?'(台'+esc(mNo)+')':''}</b>:${esc(memo)}`);
     const invNote = m.medIn>0 ? `<br><span style="font-size:10.5px">(現金${yen(m.cash)}+メダル${m.medIn}枚)</span>` : '';
     const retNote = m.medOut>0 ? `<br><span style="font-size:10.5px">(${m.medOut}枚)</span>` : '';
@@ -631,24 +658,17 @@ function buildReport(){
 
     <div class="pb">
     <p class="sec-title">3. 添付証憑</p>
-    <div class="memo-box">${ev.length?ev.join('、'):'なし'}${photos.length?`(写真${photos.length}枚を下記に添付)`:''}</div>
+    <div class="memo-box">${ev.length?ev.join('、'):'なし'}${totalPhotos?`(写真${totalPhotos}枚を下記に添付)`:''}</div>
     </div>
-    ${photos.length?`
+    ${totalPhotos?`
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
-      ${photos.map((p,i)=>`<figure style="margin:0;text-align:center"><img src="${p}" style="height:190px;max-width:45vw;width:auto;border:1px solid #333"><figcaption style="font-size:11px">写真${i+1}</figcaption></figure>`).join('')}
+      ${photoFigs}
     </div>`:''}
 
     <p class="footer-note">※ 車両利用時の交通費は社内規程により走行距離 × ${CAR_RATE}円で算定。<br>以上</p>
   `;
 
-  /* ---- スプレッドシート用データを組み立て ---- */
-  const machineDetail = [];
-  document.querySelectorAll('#machines .card').forEach(c=>{
-    const name=c.querySelector('.m-name').value, no=c.querySelector('.m-no').value;
-    const m = machineCalc(c);
-    const gms=c.querySelector('.m-games').value, memo=c.querySelector('.m-memo').value;
-    machineDetail.push(`${name}(台${no}) 現金${m.cash}円+メダル${m.medIn}枚→投資${m.invY}円 回収${m.medOut}枚=${m.retY}円 収支${m.retY-m.invY}円${gms?' '+gms+'G':''}${memo?' / '+memo:''}`);
-  });
+  /* ---- スプレッドシート用データを組み立て(1台=1行) ---- */
   const tripDetail = [];
   document.querySelectorAll('#trips .card').forEach(c=>{
     const isCar = c.querySelector('input[type=radio][value=car]').checked;
@@ -661,7 +681,10 @@ function buildReport(){
       tripDetail.push(`${seg} 電車等${round?'往復':''} ${amt}円`);
     }
   });
+  const nowT = new Date();
+  const repId = `${todayISO().replace(/-/g,'')}-${String(nowT.getHours()).padStart(2,'0')}${String(nowT.getMinutes()).padStart(2,'0')}${String(nowT.getSeconds()).padStart(2,'0')} ${g('staffName').trim()||'氏名未入力'}`;
   lastData = {
+    報告ID: repId,
     報告日: todayISO(),
     調査日: g('surveyDate'),
     開始時刻: g('timeStart'),
@@ -672,16 +695,11 @@ function buildReport(){
     店舗所在地: sAddr,
     調査目的: g('purpose'),
     換金率: `${kashi}枚貸し/${modoshi}枚交換`,
-    台数: document.querySelectorAll('#machines .card').length,
-    総投資: inv,
-    総回収: ret,
-    収支: net,
-    交通費: trip,
-    台詳細: machineDetail.join(' | '),
+    台: daiList,
+    '交通費(円)': trip,
     交通費詳細: tripDetail.join(' | '),
     添付証憑: ev.join('、'),
-    写真枚数: photos.length,
-    写真: photos,
+    写真枚数: totalPhotos,
     _sent: false
   };
   setSheetStatus('', true);
