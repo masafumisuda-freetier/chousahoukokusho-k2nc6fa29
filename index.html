@@ -105,12 +105,11 @@
   @media print{
     body{background:#fff}
     .app,.report-toolbar,.scroll-hint{display:none!important}
-    /* 改ページ調整 */
+    /* 改ページ調整:セクション丸ごとページ内に収める(収まらない場合のみ内部で分割) */
+    .pb{page-break-inside:avoid;break-inside:avoid}
     table.grid thead{display:table-header-group}
     table.grid tr,table.doc tr{page-break-inside:avoid;break-inside:avoid}
-    .sec-title{page-break-after:avoid;break-after:avoid}
-    .sec-title{page-break-inside:avoid}
-    p[style*="font-family:var(--gothic)"]{page-break-after:avoid}
+    .sec-title{page-break-after:avoid;break-after:avoid;page-break-inside:avoid}
     .memo-box{orphans:3;widows:3}
     figure{page-break-inside:avoid;break-inside:avoid}
     .sum-line{page-break-before:avoid}
@@ -600,6 +599,7 @@ function buildReport(){
       <tr><th>メダル換金率</th><td>${rateStr}</td></tr>
     </table>
 
+    <div class="pb">
     <p class="sec-title">1. 調査台データ</p>
     <table class="grid">
       <thead><tr><th>No.</th><th>機種名</th><th>台番号</th><th>投資額(円)</th><th>回収額(円)</th><th>収支(円)</th><th>総G数</th></tr></thead>
@@ -612,10 +612,14 @@ function buildReport(){
     </table>
     <p class="scroll-hint">※ 表は横にスクロールできます</p>
     <p class="sum-line">調査収支合計:<b>${net>=0?'':'△'}${yen(Math.abs(net))} 円</b>${net<0?'(損失)':net>0?'(利益)':''}</p>
+    </div>
     ${memoList.length?`
+    <div class="pb">
     <p style="font-family:var(--gothic);font-weight:600;font-size:12.5px;margin:6px 0 3px">備考(挙動や調査内容)</p>
-    <div class="memo-box" style="font-size:12.5px;line-height:1.8">${memoList.join('<br>')}</div>`:''}
+    <div class="memo-box" style="font-size:12.5px;line-height:1.8">${memoList.join('<br>')}</div>
+    </div>`:''}
 
+    <div class="pb">
     <p class="sec-title">2. 交通費</p>
     <table class="grid">
       <thead><tr><th>No.</th><th>区間</th><th>手段・内訳</th><th>金額(円)</th></tr></thead>
@@ -623,12 +627,15 @@ function buildReport(){
       <tr style="background:#f7f8fa;font-weight:600"><td colspan="3">交通費合計</td><td class="r">${yen(trip)}</td></tr></tbody>
     </table>
     <p class="scroll-hint">※ 表は横にスクロールできます</p>
+    </div>
 
+    <div class="pb">
     <p class="sec-title">3. 添付証憑</p>
     <div class="memo-box">${ev.length?ev.join('、'):'なし'}${photos.length?`(写真${photos.length}枚を下記に添付)`:''}</div>
+    </div>
     ${photos.length?`
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
-      ${photos.map((p,i)=>`<figure style="margin:0;text-align:center"><img src="${p}" style="width:220px;max-width:45vw;border:1px solid #333"><figcaption style="font-size:11px">写真${i+1}</figcaption></figure>`).join('')}
+      ${photos.map((p,i)=>`<figure style="margin:0;text-align:center"><img src="${p}" style="height:190px;max-width:45vw;width:auto;border:1px solid #333"><figcaption style="font-size:11px">写真${i+1}</figcaption></figure>`).join('')}
     </div>`:''}
 
     <p class="footer-note">※ 車両利用時の交通費は社内規程により走行距離 × ${CAR_RATE}円で算定。<br>以上</p>
