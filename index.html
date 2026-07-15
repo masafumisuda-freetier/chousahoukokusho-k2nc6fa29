@@ -560,7 +560,7 @@ function removeMachinePhoto(btn, i){
   card._photos.splice(i,1);
   renderMachinePhotos(card);
 }
-const PHOTO_TYPES = ['台データ写真','サンド写真','レシート・領収書','その他'];
+const PHOTO_TYPES = ['台データ写真','サンド写真','マイスロ等','レシート・領収書','その他'];
 function setPhotoType(sel, i){
   const card = sel.closest('.card');
   card._photos[i].type = sel.value;
