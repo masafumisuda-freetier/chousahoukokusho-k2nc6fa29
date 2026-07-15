@@ -79,6 +79,8 @@
   .memo-box{border:1px solid #333;min-height:32px;padding:6px 8px;white-space:pre-wrap}
   .footer-note{font-size:11.5px;margin-top:14px;color:#333}
 
+  .draft-bar{display:flex;gap:8px;margin-bottom:14px;align-items:stretch}
+  .draft-bar select{flex:1;min-height:42px;font-size:14px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:#fff}
   .scroll-hint{display:none}
 
   /* ===== スマホ画面での入力フォーム(2列グリッド化) ===== */
@@ -131,7 +133,12 @@
 <div class="app" id="app">
   <div class="app-header">
     <h1>遊技機調査報告書 作成ツール</h1>
-    <p>各項目を入力し「報告書を作成」を押すと、印刷・PDF保存できる報告書が生成されます。</p>
+    <p>各項目を入力し「報告書を作成」を押すと、印刷・PDF保存できる報告書が生成されます。<br>入力内容と写真はこの端末に自動保存されるので、日中に少しずつ入力して、最後にまとめて送信・PDF作成できます。</p>
+    <p class="hint" id="draftStatus"></p>
+  </div>
+  <div class="draft-bar" id="draftBar" style="display:none">
+    <select id="draftSelect" onchange="switchDraft(this.value)"></select>
+    <button type="button" class="add" onclick="startNewDraft()">+ 新規報告</button>
   </div>
 
   <fieldset>
@@ -194,8 +201,9 @@
 
   <div class="actions">
     <button class="primary" onclick="buildReport()">報告書を作成</button>
+    <button class="secondary" type="button" onclick="clearAll()">入力内容をクリア</button>
   </div>
-  <p class="note">※ 店舗名と所在地の組み合わせは、報告書を作成した時点でこのブラウザに記憶されます(入力内容そのものは保存されません)。作成後は印刷またはPDF保存をしてください。</p>
+  <p class="note">※ 入力内容と写真はこの端末(ブラウザ)に自動保存され、開き直すと復元されます。送信が完了すると、その報告の下書きは自動で消去されます。店舗を移動して別の報告を並行して作るときは、画面上部の「+ 新規報告」を押してください(前の下書きは切り替え欄からいつでも開けます)。</p>
 </div>
 
 <!-- ================= 報告書画面 ================= -->
@@ -265,6 +273,228 @@ function normalizeStaffName(){
     hint.textContent = '※ 姓と名の間に半角スペースを1つ入れてください(例:山田 太郎)';
     hint.style.color = '';
   }
+}
+
+/* ---------- 下書きの自動保存(複数の報告を並行して保持できます) ---------- */
+let currentDraftId = null;
+const newDraftId = () => 'd' + Date.now() + Math.floor(Math.random()*1000);
+
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open('chousa-tool', 1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore('draft');
+    r.onsuccess = ()=> res(r.result);
+    r.onerror = ()=> rej(r.error);
+  });
+}
+async function draftPut(id, obj){
+  const db = await idbOpen();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction('draft','readwrite');
+    tx.objectStore('draft').put(obj, id);
+    tx.oncomplete = res; tx.onerror = ()=>rej(tx.error);
+  });
+}
+async function draftGet(id){
+  const db = await idbOpen();
+  return new Promise((res)=>{
+    const rq = db.transaction('draft','readonly').objectStore('draft').get(id);
+    rq.onsuccess = ()=> res(rq.result || null);
+    rq.onerror = ()=> res(null);
+  });
+}
+async function draftDel(id){
+  const db = await idbOpen();
+  return new Promise((res)=>{
+    const tx = db.transaction('draft','readwrite');
+    tx.objectStore('draft').delete(id);
+    tx.oncomplete = res; tx.onerror = res;
+  });
+}
+async function draftAll(){
+  const db = await idbOpen();
+  return new Promise((res)=>{
+    const st = db.transaction('draft','readonly').objectStore('draft');
+    const kq = st.getAllKeys(), vq = st.getAll();
+    let keys = null, vals = null;
+    const done = ()=>{
+      if(keys && vals){
+        const list = keys.map((k,i)=>Object.assign({id:k}, vals[i]||{}));
+        list.sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+        res(list);
+      }
+    };
+    kq.onsuccess = ()=>{ keys = kq.result; done(); };
+    vq.onsuccess = ()=>{ vals = vq.result; done(); };
+    kq.onerror = vq.onerror = ()=> res([]);
+  });
+}
+function setDraftStatus(t){
+  const el = document.getElementById('draftStatus');
+  if(el) el.textContent = t;
+}
+function collectDraft(){
+  const gv = id => document.getElementById(id).value;
+  return {
+    savedAt: Date.now(),
+    fields: {purpose:gv('purpose'), surveyDate:gv('surveyDate'), timeStart:gv('timeStart'), timeEnd:gv('timeEnd'),
+             dept:gv('dept'), staffName:gv('staffName'), shopName:gv('shopName'), shopAddr:gv('shopAddr'),
+             rateKashi:gv('rateKashi'), rateModoshi:gv('rateModoshi')},
+    machines: Array.from(document.querySelectorAll('#machines .card')).map(c=>({
+      name:c.querySelector('.m-name').value, no:c.querySelector('.m-no').value,
+      cash:c.querySelector('.m-cash').value, medin:c.querySelector('.m-medin').value,
+      medout:c.querySelector('.m-medout').value, games:c.querySelector('.m-games').value,
+      memo:c.querySelector('.m-memo').value, photos:c._photos||[]
+    })),
+    trips: Array.from(document.querySelectorAll('#trips .card')).map(c=>({
+      from:c.querySelector('.t-from').value, to:c.querySelector('.t-to').value,
+      mode:c.querySelector('input[type=radio][value=car]').checked?'car':'train',
+      round:c.querySelector('.t-round').checked,
+      km:c.querySelector('.t-km').value, fare:c.querySelector('.t-fare').value, route:c.querySelector('.t-route').value
+    }))
+  };
+}
+function isDraftEmpty(d){
+  const f = d.fields||{};
+  if([f.purpose,f.shopName,f.shopAddr,f.timeStart,f.timeEnd].some(v=>v&&String(v).trim())) return false;
+  if((d.machines||[]).some(m=>[m.name,m.no,m.cash,m.medin,m.medout,m.games,m.memo].some(v=>v&&String(v).trim())||(m.photos||[]).length)) return false;
+  if((d.trips||[]).some(t=>[t.from,t.to,t.km,t.fare,t.route].some(v=>v&&String(v).trim()))) return false;
+  return true;
+}
+function restoreDraft(d){
+  const f = d.fields||{};
+  const setV = (id,v)=>{ const el=document.getElementById(id); if(el && v!==undefined && v!==null && v!=='') el.value=v; };
+  ['purpose','surveyDate','timeStart','timeEnd','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>{
+    document.getElementById(k).value = '';
+  });
+  document.getElementById('rateKashi').value = '50';
+  ['purpose','surveyDate','timeStart','timeEnd','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>setV(k,f[k]));
+  if(!f.surveyDate) document.getElementById('surveyDate').valueAsDate = new Date();
+  document.getElementById('machines').innerHTML = '';
+  ((d.machines&&d.machines.length)?d.machines:[{}]).forEach(md=>{
+    addMachine();
+    const c = document.querySelector('#machines .card:last-child');
+    const q = (cls,v)=>{ if(v!==undefined && v!==null) c.querySelector(cls).value=v; };
+    q('.m-name',md.name); q('.m-no',md.no); q('.m-cash',md.cash); q('.m-medin',md.medin);
+    q('.m-medout',md.medout); q('.m-games',md.games); q('.m-memo',md.memo);
+    c._photos = (md.photos||[]).map(p=> typeof p==='string' ? {data:p,type:'台データ写真'} : p);
+    renderMachinePhotos(c);
+  });
+  document.getElementById('trips').innerHTML = '';
+  ((d.trips&&d.trips.length)?d.trips:[{}]).forEach(td=>{
+    addTrip();
+    const c = document.querySelector('#trips .card:last-child');
+    const q = (cls,v)=>{ if(v!==undefined && v!==null) c.querySelector(cls).value=v; };
+    q('.t-from',td.from); q('.t-to',td.to); q('.t-km',td.km); q('.t-fare',td.fare); q('.t-route',td.route);
+    if(td.mode==='train'){ const r=c.querySelector('input[value="train"]'); r.checked=true; tripMode(r); }
+    if(td.round) c.querySelector('.t-round').checked = true;
+  });
+  document.getElementById('shopSaved').style.display = 'none';
+  onShopInput();
+  calcTotals();
+}
+function resetForm(){
+  ['purpose','timeStart','timeEnd','shopName','shopAddr','rateModoshi'].forEach(id=>{ document.getElementById(id).value=''; });
+  document.getElementById('rateKashi').value = '50';
+  document.getElementById('surveyDate').valueAsDate = new Date();
+  document.getElementById('machines').innerHTML = ''; addMachine();
+  document.getElementById('trips').innerHTML = ''; addTrip();
+  document.getElementById('shopSaved').style.display = 'none';
+  calcTotals();
+}
+function labelOf(d){
+  const f = d.fields||{};
+  let date = '';
+  if(f.surveyDate){ const p = f.surveyDate.split('-'); date = `${+p[1]}/${+p[2]}`; }
+  const t = new Date(d.savedAt||Date.now());
+  return `${date} ${((f.shopName||'').trim())||'店舗未入力'}(保存${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')})`;
+}
+async function refreshDraftBar(){
+  let list = [];
+  try{ list = await draftAll(); }catch(e){}
+  const bar = document.getElementById('draftBar');
+  const sel = document.getElementById('draftSelect');
+  if(!bar || !sel) return;
+  if(!list.length){ bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const hasCur = list.some(d=>d.id===currentDraftId);
+  sel.innerHTML = list.map(d=>`<option value="${d.id}"${d.id===currentDraftId?' selected':''}>${labelOf(d)}</option>`).join('')
+    + (hasCur ? '' : `<option value="${currentDraftId}" selected>(新規・未保存)</option>`);
+}
+let saveTimer = null;
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      const d = collectDraft();
+      if(isDraftEmpty(d)){
+        if(currentDraftId) await draftDel(currentDraftId);
+        setDraftStatus('');
+        refreshDraftBar();
+        return;
+      }
+      if(!currentDraftId) currentDraftId = newDraftId();
+      await draftPut(currentDraftId, d);
+      const n = new Date();
+      setDraftStatus(`✓ この端末に自動保存済み(${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')})`);
+      refreshDraftBar();
+    }catch(e){}
+  }, 800);
+}
+async function flushSave(){
+  clearTimeout(saveTimer); saveTimer = null;
+  try{
+    const d = collectDraft();
+    if(isDraftEmpty(d)){ if(currentDraftId) await draftDel(currentDraftId); }
+    else{
+      if(!currentDraftId) currentDraftId = newDraftId();
+      await draftPut(currentDraftId, d);
+    }
+  }catch(e){}
+}
+async function switchDraft(id){
+  if(id === currentDraftId) return;
+  await flushSave();
+  const d = await draftGet(id);
+  if(!d){ refreshDraftBar(); return; }
+  currentDraftId = id;
+  try{ localStorage.setItem('chousa-active-draft', id); }catch(e){}
+  restoreDraft(d);
+  setDraftStatus('下書きを切り替えました');
+  refreshDraftBar();
+}
+async function startNewDraft(){
+  await flushSave();
+  currentDraftId = newDraftId();
+  try{ localStorage.setItem('chousa-active-draft', currentDraftId); }catch(e){}
+  resetForm();
+  setDraftStatus('新しい報告を開始しました(前の下書きは上の切り替えから開けます)');
+  refreshDraftBar();
+}
+async function clearAll(){
+  if(!confirm('この報告の入力内容と写真を消去しますか?\n(他の下書きは消えません)')) return;
+  try{ if(currentDraftId) await draftDel(currentDraftId); }catch(e){}
+  let list = [];
+  try{ list = await draftAll(); }catch(e){}
+  if(list.length){
+    currentDraftId = list[0].id;
+    try{ localStorage.setItem('chousa-active-draft', currentDraftId); }catch(e){}
+    restoreDraft(list[0]);
+    setDraftStatus('消去しました。別の下書きを開いています');
+  }else{
+    currentDraftId = newDraftId();
+    resetForm();
+    setDraftStatus('消去しました');
+  }
+  refreshDraftBar();
+}
+async function finishDraftAfterSend(){
+  try{
+    if(currentDraftId) await draftDel(currentDraftId);
+    const list = await draftAll();
+    refreshDraftBar();
+    setDraftStatus(list.length ? `送信済み(この下書きは消去しました)。ほかに${list.length}件の下書きがあります` : '送信済み(この下書きは消去しました)');
+  }catch(e){}
 }
 
 /* ---------- 写真添付(台ごと) ---------- */
@@ -337,6 +567,7 @@ function renderMachinePhotos(card){
     </div>`).join('');
   const st = card.querySelector('.m-photo-status');
   st.textContent = ph.length ? `${ph.length}枚添付中(写真の下で種別を選べます)` : '';
+  scheduleSave();
 }
 
 /* ---------- 店舗記憶(Claude内では window.storage、ダウンロード後は localStorage) ---------- */
@@ -727,7 +958,10 @@ function sendToSheet(){
     method:'POST', mode:'no-cors',
     headers:{'Content-Type':'text/plain'},
     body: JSON.stringify(lastData)
-  }).then(()=> setSheetStatus('✓ スプレッドシートへ送信しました', true))
+  }).then(()=>{
+      setSheetStatus('✓ スプレッドシートへ送信しました', true);
+      finishDraftAfterSend();
+    })
     .catch(()=>{
       lastData._sent = false;
       setSheetStatus('✕ 送信に失敗しました(もう一度ボタンを押すか、コピーで貼り付けてください)', false);
@@ -740,12 +974,34 @@ function backToForm(){
 }
 
 /* 初期状態 */
-addMachine();
-addTrip();
-document.getElementById('surveyDate').valueAsDate = new Date();
 document.getElementById('shopName').addEventListener('input', onShopInput);
 document.getElementById('shopName').addEventListener('change', onShopInput);
-loadShops().then(()=>{ refreshShopList(); onShopInput(); });
+(async function init(){
+  let list = [];
+  try{
+    const legacy = await draftGet('current'); // 旧形式の下書きを引き継ぐ
+    if(legacy){ await draftPut(newDraftId(), legacy); await draftDel('current'); }
+    list = await draftAll();
+  }catch(e){}
+  let activeId = null;
+  try{ activeId = localStorage.getItem('chousa-active-draft'); }catch(e){}
+  const target = list.find(d=>d.id===activeId) || list[0];
+  if(target && !isDraftEmpty(target)){
+    currentDraftId = target.id;
+    restoreDraft(target);
+    const d = new Date(target.savedAt);
+    setDraftStatus(`前回の入力を復元しました(最終保存 ${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')})`);
+  }else{
+    currentDraftId = newDraftId();
+    addMachine();
+    addTrip();
+    document.getElementById('surveyDate').valueAsDate = new Date();
+  }
+  refreshDraftBar();
+  loadShops().then(()=>{ refreshShopList(); onShopInput(); });
+  document.addEventListener('input', scheduleSave);
+  document.addEventListener('change', scheduleSave);
+})();
 </script>
 </body>
 </html>
