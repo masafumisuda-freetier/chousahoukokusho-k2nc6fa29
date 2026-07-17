@@ -82,6 +82,10 @@
   .ts-row{position:relative;padding-right:58px}
   .ts-del{position:absolute;right:0;bottom:14px;border:1px solid var(--line);background:#fff;color:#8a3030;border-radius:4px;font-size:12px;padding:9px 10px;cursor:pointer}
   .ts-del:hover{background:#fbeeee}
+  .jump-nav{position:fixed;right:12px;bottom:100px;display:flex;flex-direction:column;gap:10px;z-index:50}
+  .jump-nav button{width:46px;height:46px;border-radius:50%;border:none;background:rgba(31,58,95,.85);color:#fff;font-size:18px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+  .jump-nav button:active{background:var(--indigo)}
+  @media print{.jump-nav{display:none!important}}
   .draft-bar{display:flex;gap:8px;margin-bottom:14px;align-items:stretch}
   .draft-bar select{flex:1;min-height:42px;font-size:14px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:#fff}
   .scroll-hint{display:none}
@@ -219,6 +223,11 @@
     <span id="sheetStatus" style="font-size:13px;align-self:center"></span>
   </div>
   <div class="report" id="report"></div>
+</div>
+
+<div class="jump-nav">
+  <button type="button" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="一番上へ">▲</button>
+  <button type="button" onclick="window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})" aria-label="一番下へ">▼</button>
 </div>
 
 <script>
