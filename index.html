@@ -282,6 +282,8 @@ function normalizeStaffName(){
 
 /* ---------- 下書きの自動保存(複数の報告を並行して保持できます) ---------- */
 let currentDraftId = null;
+let currentReportId = null;   // 送信時に確定する報告ID(再送信で同じIDを使い、スプシ側を上書きする)
+let currentDraftSentAt = null; // この下書きを送信した日時
 const newDraftId = () => 'd' + Date.now() + Math.floor(Math.random()*1000);
 
 function idbOpen(){
@@ -342,6 +344,8 @@ function collectDraft(){
   const gv = id => document.getElementById(id).value;
   return {
     savedAt: Date.now(),
+    reportId: currentReportId,
+    sentAt: currentDraftSentAt,
     fields: {purpose:gv('purpose'), surveyDate:gv('surveyDate'),
              dept:gv('dept'), staffName:gv('staffName'), shopName:gv('shopName'), shopAddr:gv('shopAddr'),
              rateKashi:gv('rateKashi'), rateModoshi:gv('rateModoshi')},
@@ -369,6 +373,8 @@ function isDraftEmpty(d){
   return true;
 }
 function restoreDraft(d){
+  currentReportId = d.reportId || null;
+  currentDraftSentAt = d.sentAt || null;
   const f = d.fields||{};
   const setV = (id,v)=>{ const el=document.getElementById(id); if(el && v!==undefined && v!==null && v!=='') el.value=v; };
   ['purpose','surveyDate','dept','staffName','shopName','shopAddr','rateKashi','rateModoshi'].forEach(k=>{
@@ -418,10 +424,11 @@ function resetForm(){
 }
 function labelOf(d){
   const f = d.fields||{};
+  const mark = d.sentAt ? '✓送信済 ' : '';
   let date = '';
   if(f.surveyDate){ const p = f.surveyDate.split('-'); date = `${+p[1]}/${+p[2]}`; }
   const t = new Date(d.savedAt||Date.now());
-  return `${date} ${((f.shopName||'').trim())||'店舗未入力'}(保存${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')})`;
+  return `${mark}${date} ${((f.shopName||'').trim())||'店舗未入力'}(保存${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')})`;
 }
 async function refreshDraftBar(){
   let list = [];
@@ -480,6 +487,8 @@ async function switchDraft(id){
 async function startNewDraft(){
   await flushSave();
   currentDraftId = newDraftId();
+  currentReportId = null;
+  currentDraftSentAt = null;
   try{ localStorage.setItem('chousa-active-draft', currentDraftId); }catch(e){}
   resetForm();
   setDraftStatus('新しい報告を開始しました(前の下書きは上の切り替えから開けます)');
@@ -497,6 +506,8 @@ async function clearAll(){
     setDraftStatus('消去しました。別の下書きを開いています');
   }else{
     currentDraftId = newDraftId();
+    currentReportId = null;
+    currentDraftSentAt = null;
     resetForm();
     setDraftStatus('消去しました');
   }
@@ -504,10 +515,10 @@ async function clearAll(){
 }
 async function finishDraftAfterSend(){
   try{
-    if(currentDraftId) await draftDel(currentDraftId);
-    const list = await draftAll();
+    currentDraftSentAt = Date.now();
+    await flushSave(); // 「送信済み」マークを付けて下書きを保持(3日間は修正・再送信できます)
     refreshDraftBar();
-    setDraftStatus(list.length ? `送信済み(この下書きは消去しました)。ほかに${list.length}件の下書きがあります` : '送信済み(この下書きは消去しました)');
+    setDraftStatus('送信済み。間違いに気づいたら切り替え欄から開いて修正し、もう一度送信すると上書きされます(3日で自動消去)');
   }catch(e){}
 }
 
@@ -1019,7 +1030,10 @@ function buildReport(){
     }
   });
   const nowT = new Date();
-  const repId = `${todayISO().replace(/-/g,'')}-${String(nowT.getHours()).padStart(2,'0')}${String(nowT.getMinutes()).padStart(2,'0')}${String(nowT.getSeconds()).padStart(2,'0')} ${g('staffName').trim()||'氏名未入力'}`;
+  if(!currentReportId){
+    currentReportId = `${todayISO().replace(/-/g,'')}-${String(nowT.getHours()).padStart(2,'0')}${String(nowT.getMinutes()).padStart(2,'0')}${String(nowT.getSeconds()).padStart(2,'0')} ${g('staffName').trim()||'氏名未入力'}`;
+  }
+  const repId = currentReportId;
   lastData = {
     報告ID: repId,
     報告日: todayISO(),
@@ -1042,6 +1056,8 @@ function buildReport(){
   };
   setSheetStatus('', true);
 
+  flushSave(); // 報告IDを含めて下書きを保存
+
   document.getElementById('app').style.display='none';
   document.getElementById('reportWrap').style.display='block';
   window.scrollTo(0,0);
@@ -1056,17 +1072,18 @@ function setSheetStatus(msg, ok){
 function sendToSheet(){
   if(!GAS_URL || !lastData) return null;
   if(lastData._sent){
-    setSheetStatus('✓ この報告は送信済みです(重複送信はされません)', true);
+    setSheetStatus('✓ この報告は送信済みです(修正する場合は入力画面に戻って直し、もう一度「報告書を作成」→送信してください)', true);
     return null;
   }
   lastData._sent = true;
+  const isUpdate = !!currentDraftSentAt; // 2回目以降の送信=修正の上書き
   setSheetStatus(lastData.写真枚数 ? `スプレッドシートへ送信中…(写真${lastData.写真枚数}枚を含むため少し時間がかかります)` : 'スプレッドシートへ送信中…', true);
   return fetch(GAS_URL, {
     method:'POST', mode:'no-cors',
     headers:{'Content-Type':'text/plain'},
     body: JSON.stringify(lastData)
   }).then(()=>{
-      setSheetStatus('✓ スプレッドシートへ送信しました', true);
+      setSheetStatus(isUpdate ? '✓ 修正内容で上書き送信しました(古い行は自動で削除されます)' : '✓ スプレッドシートへ送信しました', true);
       finishDraftAfterSend();
     })
     .catch(()=>{
@@ -1090,10 +1107,19 @@ document.getElementById('shopName').addEventListener('change', onShopInput);
     if(legacy){ await draftPut(newDraftId(), legacy); await draftDel('current'); }
     list = await draftAll();
   }catch(e){}
+  // 送信から3日たった下書きは自動で消去
+  try{
+    const cutoff = Date.now() - 3*24*60*60*1000;
+    for(const d of list.filter(x=>x.sentAt && x.sentAt < cutoff)){
+      await draftDel(d.id);
+    }
+    list = list.filter(x=>!(x.sentAt && x.sentAt < cutoff));
+  }catch(e){}
   let activeId = null;
   try{ activeId = localStorage.getItem('chousa-active-draft'); }catch(e){}
-  const target = list.find(d=>d.id===activeId) || list[0];
-  if(target && !isDraftEmpty(target)){
+  // 選択中が送信済みなら、新しい報告から始める(送信済みは切り替え欄に残る)
+  const target = (list.find(d=>d.id===activeId) || list.find(d=>!d.sentAt) || null);
+  if(target && !isDraftEmpty(target) && !target.sentAt){
     currentDraftId = target.id;
     restoreDraft(target);
     const d = new Date(target.savedAt);
