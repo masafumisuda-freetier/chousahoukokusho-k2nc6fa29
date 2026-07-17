@@ -253,7 +253,7 @@ function sendAndPrint(){
     let done = false;
     const go = ()=>{ if(!done){ done = true; printReport(); } };
     p.then(go).catch(go);
-    setTimeout(go, 20000); // 万一20秒たっても終わらなければ印刷だけ進める
+    setTimeout(go, 150000); // 万一2分半たっても終わらなければ印刷だけ進める
   }else{
     printReport();
   }
@@ -531,7 +531,7 @@ function compressImage(file){
     reader.onload = ()=>{
       const img = new Image();
       img.onload = ()=>{
-        const maxDim = 1600;
+        const maxDim = 1400;
         let w = img.width, h = img.height;
         if(Math.max(w,h) > maxDim){
           const s = maxDim / Math.max(w,h);
@@ -540,7 +540,7 @@ function compressImage(file){
         const cv = document.createElement('canvas');
         cv.width = w; cv.height = h;
         cv.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(cv.toDataURL('image/jpeg', 0.8));
+        resolve(cv.toDataURL('image/jpeg', 0.75));
       };
       img.onerror = ()=>reject(new Error('画像を読み込めませんでした'));
       img.src = reader.result;
@@ -1069,27 +1069,58 @@ function setSheetStatus(msg, ok){
   el.textContent = msg;
   el.style.color = ok ? '#2c7a4b' : '#8a3030';
 }
-function sendToSheet(){
-  if(!GAS_URL || !lastData) return null;
+function buildSendChunks(){
+  // 写真の量に応じて台をいくつかの便に分ける(1便あたり約3.5MBまで)
+  const MAX_BYTES = 3.5 * 1024 * 1024;
+  const chunks = [];
+  let cur = [], curSize = 0;
+  (lastData.台 || []).forEach(m=>{
+    const s = JSON.stringify(m).length;
+    if(cur.length && curSize + s > MAX_BYTES){ chunks.push(cur); cur = []; curSize = 0; }
+    cur.push(m); curSize += s;
+  });
+  if(cur.length || !chunks.length) chunks.push(cur);
+  return chunks;
+}
+async function sendToSheet(){
+  if(!GAS_URL || !lastData) return;
   if(lastData._sent){
     setSheetStatus('✓ この報告は送信済みです(修正する場合は入力画面に戻って直し、もう一度「報告書を作成」→送信してください)', true);
-    return null;
+    return;
   }
   lastData._sent = true;
   const isUpdate = !!currentDraftSentAt; // 2回目以降の送信=修正の上書き
-  setSheetStatus(lastData.写真枚数 ? `スプレッドシートへ送信中…(写真${lastData.写真枚数}枚を含むため少し時間がかかります)` : 'スプレッドシートへ送信中…', true);
-  return fetch(GAS_URL, {
-    method:'POST', mode:'no-cors',
-    headers:{'Content-Type':'text/plain'},
-    body: JSON.stringify(lastData)
-  }).then(()=>{
-      setSheetStatus(isUpdate ? '✓ 修正内容で上書き送信しました(古い行は自動で削除されます)' : '✓ スプレッドシートへ送信しました', true);
-      finishDraftAfterSend();
-    })
-    .catch(()=>{
-      lastData._sent = false;
-      setSheetStatus('✕ 送信に失敗しました(もう一度ボタンを押すか、コピーで貼り付けてください)', false);
-    });
+  const chunks = buildSendChunks();
+  try{
+    for(let i = 0; i < chunks.length; i++){
+      setSheetStatus(chunks.length > 1
+        ? `スプレッドシートへ送信中… (${i+1}/${chunks.length})写真が多いため分割して送っています`
+        : (lastData.写真枚数 ? `スプレッドシートへ送信中…(写真${lastData.写真枚数}枚)` : 'スプレッドシートへ送信中…'), true);
+      const payload = Object.assign({}, lastData, {台: chunks[i], 分割番号: i, 分割数: chunks.length});
+      delete payload._sent;
+      if(i > 0){ payload['交通費(円)'] = ''; payload['交通費詳細'] = ''; }
+      let ok = false, tries = 0;
+      while(!ok){
+        tries++;
+        try{
+          await fetch(GAS_URL, {
+            method:'POST', mode:'no-cors',
+            headers:{'Content-Type':'text/plain'},
+            body: JSON.stringify(payload)
+          });
+          ok = true;
+        }catch(err){
+          if(tries >= 2) throw err; // 1回だけ自動リトライ
+          setSheetStatus(`通信に失敗したため再送信しています… (${i+1}/${chunks.length})`, true);
+        }
+      }
+    }
+    setSheetStatus(isUpdate ? '✓ 修正内容で上書き送信しました(古い行は自動で削除されます)' : '✓ スプレッドシートへ送信しました', true);
+    finishDraftAfterSend();
+  }catch(e){
+    lastData._sent = false;
+    setSheetStatus('✕ 送信に失敗しました(電波の良い場所で、もう一度送信ボタンを押してください)', false);
+  }
 }
 function backToForm(){
   document.title = APP_TITLE;
